@@ -108,6 +108,58 @@ async function saveData(plantId, year, month, { states, comments }) {
 }
 
 // ============================================================================
+// Store : Plan d'action (collection par site)
+// ============================================================================
+function actionsKey(plantId) { return 'sf_actions_' + plantId; }
+
+function subscribeActions(plantId, callback) {
+  if (USING_CLOUD && firestoreDb) {
+    const col = firestoreApi.collection(firestoreDb, 'plants', plantId, 'actions');
+    return firestoreApi.onSnapshot(col, (snap) => {
+      const items = [];
+      snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+      callback(items);
+    }, (err) => console.error('Erreur de synchronisation du plan d\'action :', err));
+  }
+  const key = actionsKey(plantId);
+  const read = () => {
+    try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) { return []; }
+  };
+  callback(read());
+  const onStorage = (e) => { if (e.key === key) callback(read()); };
+  window.addEventListener('storage', onStorage);
+  return () => window.removeEventListener('storage', onStorage);
+}
+
+async function addActionItem(plantId, data) {
+  if (USING_CLOUD && firestoreDb) {
+    const col = firestoreApi.collection(firestoreDb, 'plants', plantId, 'actions');
+    await firestoreApi.addDoc(col, data);
+    return;
+  }
+  const key = actionsKey(plantId);
+  const items = JSON.parse(localStorage.getItem(key) || '[]');
+  const id = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  items.unshift({ id, ...data });
+  localStorage.setItem(key, JSON.stringify(items));
+  state.actions = items;
+}
+
+async function patchActionItem(plantId, id, patch) {
+  if (USING_CLOUD && firestoreDb) {
+    const ref = firestoreApi.doc(firestoreDb, 'plants', plantId, 'actions', id);
+    await firestoreApi.updateDoc(ref, patch);
+    return;
+  }
+  const key = actionsKey(plantId);
+  const items = JSON.parse(localStorage.getItem(key) || '[]');
+  const idx = items.findIndex((it) => it.id === id);
+  if (idx !== -1) items[idx] = { ...items[idx], ...patch };
+  localStorage.setItem(key, JSON.stringify(items));
+  state.actions = items;
+}
+
+// ============================================================================
 // Helpers date
 // ============================================================================
 function daysInMonth(year, month) { return new Date(year, month, 0).getDate(); }
@@ -131,6 +183,35 @@ function isPastDay(year, month, day) {
   return new Date(year, month - 1, day) < todayStart;
 }
 
+function daysSince(isoDate) {
+  const start = new Date(isoDate);
+  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const now = new Date();
+  const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((nowDay - startDay) / 86400000);
+}
+
+function isOverdueAction(a) {
+  return a.statut === 'ouverte' && a.dateObjectif && a.dateObjectif < todayISO();
+}
+
+function todayISO() {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
+function formatFR(isoDate) {
+  if (!isoDate) return '—';
+  const [y, m, d] = isoDate.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+const PRIORITY_STYLE = {
+  1: { bg: '#C0392B', label: 'P1' },
+  2: { bg: '#B08A3E', label: 'P2' },
+  3: { bg: '#3E6B8A', label: 'P3' },
+};
+
 // ============================================================================
 // État applicatif
 // ============================================================================
@@ -143,8 +224,61 @@ let state = {
   comments: {},
   loading: true,
   unsubscribe: null,
-  modal: null, // { type: 'note'|'confirm', rowKey, day, label }
+  modal: null, // { type: 'note'|'confirm'|'action-new'|'action-postpone', ... }
+  activeTab: 'board', // 'board' | 'actions'
+  actions: [],
+  actionsLoading: true,
+  actionsUnsubscribe: null,
+  actionsSort: 'dateAsc', // 'dateAsc' | 'priority' | 'pilote' | 'daysDesc'
+  actionsStatusFilter: 'open', // 'open' | 'closed' | 'all'
+  actionsThemeFilter: 'all',
 };
+
+// ---------------------------------------------------------------------------
+// Chrono de réunion (40 minutes cible)
+// ---------------------------------------------------------------------------
+const MEETING_TARGET_SECONDS = 40 * 60;
+let meetingTimer = { seconds: 0, running: false, intervalId: null };
+
+function formatTimer(s) {
+  const m = String(Math.floor(s / 60)).padStart(2, '0');
+  const sec = String(s % 60).padStart(2, '0');
+  return `${m}:${sec}`;
+}
+function timerColor(s) {
+  const ratio = Math.min(s / MEETING_TARGET_SECONDS, 1);
+  const hue = 120 - 120 * ratio; // 120 = vert, 0 = rouge
+  return `hsl(${hue}, 65%, 50%)`;
+}
+function updateTimerDisplay() {
+  const display = document.getElementById('meeting-timer-display');
+  const color = timerColor(meetingTimer.seconds);
+  if (display) { display.textContent = formatTimer(meetingTimer.seconds); display.style.color = color; }
+  const wrap = document.getElementById('meeting-timer');
+  if (wrap) {
+    wrap.style.borderColor = color + '77';
+    wrap.classList.toggle('overtime', meetingTimer.seconds >= MEETING_TARGET_SECONDS);
+  }
+  const startBtn = document.getElementById('timer-start');
+  if (startBtn) startBtn.textContent = meetingTimer.running ? '⏸' : '▶';
+}
+function tickTimer() { meetingTimer.seconds += 1; updateTimerDisplay(); }
+function toggleTimer() {
+  if (meetingTimer.running) {
+    meetingTimer.running = false;
+    clearInterval(meetingTimer.intervalId);
+  } else {
+    meetingTimer.running = true;
+    meetingTimer.intervalId = setInterval(tickTimer, 1000);
+  }
+  updateTimerDisplay();
+}
+function resetTimer() {
+  meetingTimer.running = false;
+  clearInterval(meetingTimer.intervalId);
+  meetingTimer.seconds = 0;
+  updateTimerDisplay();
+}
 
 // ============================================================================
 // Rendu
@@ -152,9 +286,6 @@ let state = {
 const app = document.getElementById('app');
 
 function render() {
-  const totalDays = daysInMonth(state.year, state.month);
-  const isCurrentMonth = state.year === today.getFullYear() && state.month === today.getMonth() + 1;
-  const todayDay = today.getDate();
   const plant = PLANTS.find(p => p.id === state.plantId);
 
   app.innerHTML = `
@@ -173,12 +304,46 @@ function render() {
         <select id="plant-select">
           ${PLANTS.map(p => `<option value="${p.id}" ${p.id === state.plantId ? 'selected' : ''}>${p.label}</option>`).join('')}
         </select>
-        <button class="nav-btn" id="prev-month" aria-label="Mois précédent">‹</button>
-        <div class="month-label">${MONTHS_FR[state.month - 1]} ${state.year}</div>
-        <button class="nav-btn" id="next-month" aria-label="Mois suivant">›</button>
-        ${!isCurrentMonth ? `<button class="btn nav-btn btn-today" id="go-today">Aujourd'hui</button>` : ''}
+        <div class="timer" id="meeting-timer" style="border-color:${timerColor(meetingTimer.seconds)}77">
+          <span class="timer-display" id="meeting-timer-display" style="color:${timerColor(meetingTimer.seconds)}">${formatTimer(meetingTimer.seconds)}</span>
+          <button class="timer-btn" id="timer-start" title="Démarrer / mettre en pause">${meetingTimer.running ? '⏸' : '▶'}</button>
+          <button class="timer-btn" id="timer-reset" title="Réinitialiser">↺</button>
+        </div>
         ${USING_CLOUD ? `<button class="btn nav-btn btn-today" id="logout-btn" title="Se déconnecter">Déconnexion</button>` : ''}
       </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn ${state.activeTab === 'board' ? 'active' : ''}" id="tab-board">Tableau SQCDPE</button>
+      <button class="tab-btn ${state.activeTab === 'actions' ? 'active' : ''}" id="tab-actions">Plan d'action${openActionsCount() ? ` <span class="tab-count">${openActionsCount()}</span>` : ''}</button>
+    </div>
+
+    ${state.activeTab === 'board' ? renderBoardBody() : renderActionsBody()}
+
+    <div class="modal-overlay ${state.modal ? '' : 'hidden'}" id="modal-overlay">
+      ${state.modal ? renderModal() : ''}
+    </div>
+  `;
+
+  attachEvents();
+  updateTimerDisplay();
+}
+
+function openActionsCount() {
+  return state.actions.filter(a => a.statut === 'ouverte').length;
+}
+
+function renderBoardBody() {
+  const totalDays = daysInMonth(state.year, state.month);
+  const isCurrentMonth = state.year === today.getFullYear() && state.month === today.getMonth() + 1;
+  const todayDay = today.getDate();
+
+  return `
+    <div class="controls board-subnav">
+      <button class="nav-btn" id="prev-month" aria-label="Mois précédent">‹</button>
+      <div class="month-label">${MONTHS_FR[state.month - 1]} ${state.year}</div>
+      <button class="nav-btn" id="next-month" aria-label="Mois suivant">›</button>
+      ${!isCurrentMonth ? `<button class="btn nav-btn btn-today" id="go-today">Aujourd'hui</button>` : ''}
     </div>
 
     ${isCurrentMonth ? renderTodayPanel(todayDay) : ''}
@@ -198,14 +363,7 @@ function render() {
     <div class="footer-note">
       ${USING_CLOUD ? "Les données et commentaires sont synchronisés en temps réel entre tous les appareils connectés à ce site." : "Passez en mode cloud (README.md) pour partager ce tableau entre plusieurs appareils et sites."}
       Clic simple : voir le commentaire s'il existe, et changer le statut (confirmation demandée pour les jours passés). Double-clic : ajouter / modifier le commentaire.
-    </div>
-
-    <div class="modal-overlay ${state.modal ? '' : 'hidden'}" id="modal-overlay">
-      ${state.modal ? renderModal() : ''}
-    </div>
-  `;
-
-  attachEvents(totalDays);
+    </div>`;
 }
 
 function renderTodayPanel(todayDay) {
@@ -290,11 +448,119 @@ function renderGrid(totalDays, isCurrentMonth, todayDay) {
     </table>`;
 }
 
+function computeVisibleActions() {
+  let items = state.actions.slice();
+
+  if (state.actionsStatusFilter === 'open') items = items.filter(a => a.statut === 'ouverte');
+  else if (state.actionsStatusFilter === 'closed') items = items.filter(a => a.statut === 'cloturee');
+
+  if (state.actionsThemeFilter !== 'all') items = items.filter(a => a.theme === state.actionsThemeFilter);
+
+  const cmp = {
+    dateAsc: (a, b) => (a.dateCreation || '').localeCompare(b.dateCreation || ''),
+    priority: (a, b) => (a.priorite || 3) - (b.priorite || 3) || (a.dateCreation || '').localeCompare(b.dateCreation || ''),
+    pilote: (a, b) => (a.pilote || '').localeCompare(b.pilote || ''),
+    daysDesc: (a, b) => daysSince(b.dateCreation) - daysSince(a.dateCreation),
+  }[state.actionsSort];
+
+  items.sort(cmp);
+  return items;
+}
+
+function renderActionsBody() {
+  const visible = computeVisibleActions();
+  return `
+    <div class="actions-toolbar">
+      <button class="btn-save" id="new-action-btn">+ Nouvelle action</button>
+      <div class="actions-filters">
+        <select id="filter-status">
+          <option value="open" ${state.actionsStatusFilter === 'open' ? 'selected' : ''}>Ouvertes</option>
+          <option value="closed" ${state.actionsStatusFilter === 'closed' ? 'selected' : ''}>Clôturées</option>
+          <option value="all" ${state.actionsStatusFilter === 'all' ? 'selected' : ''}>Toutes</option>
+        </select>
+        <select id="filter-theme">
+          <option value="all" ${state.actionsThemeFilter === 'all' ? 'selected' : ''}>Tous les thèmes</option>
+          ${ROWS.map(r => `<option value="${r.key}" ${state.actionsThemeFilter === r.key ? 'selected' : ''}>${r.key} — ${r.label}</option>`).join('')}
+        </select>
+        <select id="sort-actions">
+          <option value="dateAsc" ${state.actionsSort === 'dateAsc' ? 'selected' : ''}>Trier : date la plus ancienne</option>
+          <option value="priority" ${state.actionsSort === 'priority' ? 'selected' : ''}>Trier : priorité</option>
+          <option value="pilote" ${state.actionsSort === 'pilote' ? 'selected' : ''}>Trier : pilote</option>
+          <option value="daysDesc" ${state.actionsSort === 'daysDesc' ? 'selected' : ''}>Trier : jours écoulés</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid-panel actions-panel">
+      ${state.actionsLoading ? `<div style="padding:30px;text-align:center;color:var(--text-muted)">Chargement du plan d'action…</div>` : renderActionsTable(visible)}
+    </div>
+
+    <div class="footer-note">
+      ${USING_CLOUD ? "Le plan d'action est synchronisé en temps réel entre tous les appareils connectés à ce site." : "Passez en mode cloud (README.md) pour partager le plan d'action entre plusieurs appareils et sites."}
+    </div>`;
+}
+
+function renderActionsTable(items) {
+  if (!items.length) {
+    return `<div style="padding:30px;text-align:center;color:var(--text-muted)">Aucune action pour ce filtre.</div>`;
+  }
+  return `
+    <table class="actions-table">
+      <thead>
+        <tr>
+          <th>Créée le</th>
+          <th>Jours</th>
+          <th>Thème</th>
+          <th>Problème</th>
+          <th>Action à réaliser</th>
+          <th>Pilote</th>
+          <th>Objectif</th>
+          <th>Priorité</th>
+          <th>Reports</th>
+          <th>Statut</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(a => {
+          const rowInfo = ROWS.find(r => r.key === a.theme);
+          const overdue = isOverdueAction(a);
+          const pr = PRIORITY_STYLE[a.priorite || 3];
+          const closed = a.statut === 'cloturee';
+          return `
+            <tr class="${overdue ? 'overdue' : ''} ${closed ? 'closed-row' : ''}">
+              <td class="nowrap">${formatFR(a.dateCreation)}</td>
+              <td class="nowrap" style="color:${overdue ? 'var(--red)' : 'var(--text-muted)'}">${daysSince(a.dateCreation)} j</td>
+              <td class="nowrap"><span class="theme-pill" style="background:${rowInfo ? rowInfo.accent : '#555'}33;color:${rowInfo ? rowInfo.accent : '#ccc'};border:1px solid ${rowInfo ? rowInfo.accent : '#555'}66">${a.theme}</span></td>
+              <td class="wrap">${escapeHtml(a.probleme)}</td>
+              <td class="wrap">${escapeHtml(a.action)}</td>
+              <td class="nowrap">${escapeHtml(a.pilote)}</td>
+              <td class="nowrap" style="color:${overdue ? 'var(--red)' : 'var(--text)'}">${formatFR(a.dateObjectif)}</td>
+              <td class="nowrap"><span class="priority-pill" style="background:${pr.bg}">${pr.label}</span></td>
+              <td class="nowrap">${a.nbReports ? `<span class="report-badge">↻ ${a.nbReports}</span>` : '—'}</td>
+              <td class="nowrap">
+                ${closed
+                  ? `<span class="status-closed">✓ Clôturée${a.dateCloture ? ' le ' + formatFR(a.dateCloture) : ''}</span>`
+                  : `<div class="row-actions">
+                      <button class="mini-btn mini-btn-green" data-close-action="${a.id}">Clôturer</button>
+                      <button class="mini-btn mini-btn-amber" data-postpone-action="${a.id}">Reporter</button>
+                    </div>`}
+              </td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function renderModal() {
-  const { type, rowKey, day, label } = state.modal;
-  const id = `${rowKey}-${day}`;
+  const { type } = state.modal;
 
   if (type === 'confirm') {
+    const { day, label } = state.modal;
     return `
       <div class="modal">
         <div class="modal-title warn">MODIFICATION D'UNE DONNÉE PASSÉE</div>
@@ -307,17 +573,86 @@ function renderModal() {
       </div>`;
   }
 
-  const text = state.comments[id] || '';
-  return `
-    <div class="modal">
-      <div class="modal-title">COMMENTAIRE</div>
-      <div class="modal-sub">${label} — jour ${day} ${MONTHS_FR[state.month - 1]} ${state.year}</div>
-      <textarea id="note-textarea" rows="5" placeholder="Précisez le contexte, l'action corrective, le responsable…">${text}</textarea>
-      <div class="modal-actions">
-        <button class="btn-cancel" id="note-cancel">Annuler</button>
-        <button class="btn-save" id="note-save">Enregistrer</button>
-      </div>
-    </div>`;
+  if (type === 'note') {
+    const { rowKey, day, label } = state.modal;
+    const id = `${rowKey}-${day}`;
+    const text = state.comments[id] || '';
+    return `
+      <div class="modal">
+        <div class="modal-title">COMMENTAIRE</div>
+        <div class="modal-sub">${label} — jour ${day} ${MONTHS_FR[state.month - 1]} ${state.year}</div>
+        <textarea id="note-textarea" rows="5" placeholder="Précisez le contexte, l'action corrective, le responsable…">${text}</textarea>
+        <div class="modal-actions">
+          <button class="btn-cancel" id="note-cancel">Annuler</button>
+          <button class="btn-save" id="note-save">Enregistrer</button>
+        </div>
+      </div>`;
+  }
+
+  if (type === 'action-new') {
+    return `
+      <div class="modal modal-wide">
+        <div class="modal-title">NOUVELLE ACTION</div>
+        <div class="modal-sub">Créée aujourd'hui, ${formatFR(todayISO())}</div>
+        <div class="form-grid">
+          <label>Thème
+            <select id="af-theme">
+              ${ROWS.map(r => `<option value="${r.key}">${r.key} — ${r.label}</option>`).join('')}
+            </select>
+          </label>
+          <label>Priorité
+            <select id="af-priorite">
+              <option value="1">P1 — Urgent</option>
+              <option value="2" selected>P2 — Important</option>
+              <option value="3">P3 — Normal</option>
+            </select>
+          </label>
+        </div>
+        <label class="full">Problème constaté
+          <textarea id="af-probleme" rows="2" placeholder="Décrivez l'écart ou le problème…"></textarea>
+        </label>
+        <label class="full">Action à réaliser
+          <textarea id="af-action" rows="2" placeholder="Que faut-il faire ?"></textarea>
+        </label>
+        <div class="form-grid">
+          <label>Pilote
+            <input id="af-pilote" type="text" placeholder="Nom du responsable" />
+          </label>
+          <label>Date objectif
+            <input id="af-date" type="date" value="${defaultObjectiveDate()}" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-cancel" id="action-new-cancel">Annuler</button>
+          <button class="btn-save" id="action-new-save">Créer l'action</button>
+        </div>
+      </div>`;
+  }
+
+  if (type === 'action-postpone') {
+    const a = state.actions.find(x => x.id === state.modal.actionId);
+    if (!a) return '';
+    return `
+      <div class="modal">
+        <div class="modal-title warn">REPORTER L'ACTION</div>
+        <div class="modal-sub">${escapeHtml(a.action)}</div>
+        <div class="modal-body-text">Nouvelle date objectif ${a.nbReports ? `(déjà reportée ${a.nbReports} fois)` : ''} :</div>
+        <input id="postpone-date" type="date" value="${a.dateObjectif || defaultObjectiveDate()}"
+          style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#181A1C;color:var(--text);font-family:'Inter',sans-serif;font-size:13px;margin-top:6px;box-sizing:border-box;" />
+        <div class="modal-actions">
+          <button class="btn-cancel" id="postpone-cancel">Annuler</button>
+          <button class="btn-save" id="postpone-confirm">Confirmer le report</button>
+        </div>
+      </div>`;
+  }
+
+  return '';
+}
+
+function defaultObjectiveDate() {
+  const d = new Date();
+  d.setDate(d.getDate() + 7);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 // ============================================================================
@@ -328,7 +663,14 @@ function attachEvents() {
     state.plantId = e.target.value;
     localStorage.setItem('sf_plant', state.plantId);
     resubscribe();
+    resubscribeActions();
   });
+
+  document.getElementById('tab-board')?.addEventListener('click', () => { state.activeTab = 'board'; render(); });
+  document.getElementById('tab-actions')?.addEventListener('click', () => { state.activeTab = 'actions'; render(); });
+
+  document.getElementById('timer-start')?.addEventListener('click', toggleTimer);
+  document.getElementById('timer-reset')?.addEventListener('click', resetTimer);
 
   document.getElementById('prev-month')?.addEventListener('click', () => changeMonth(-1));
   document.getElementById('next-month')?.addEventListener('click', () => changeMonth(1));
@@ -338,6 +680,28 @@ function attachEvents() {
     resubscribe();
   });
   document.getElementById('logout-btn')?.addEventListener('click', logout);
+
+  // ---- Plan d'action ----
+  document.getElementById('new-action-btn')?.addEventListener('click', () => {
+    state.modal = { type: 'action-new' };
+    render();
+  });
+  document.getElementById('filter-status')?.addEventListener('change', (e) => { state.actionsStatusFilter = e.target.value; render(); });
+  document.getElementById('filter-theme')?.addEventListener('change', (e) => { state.actionsThemeFilter = e.target.value; render(); });
+  document.getElementById('sort-actions')?.addEventListener('change', (e) => { state.actionsSort = e.target.value; render(); });
+  app.querySelectorAll('[data-close-action]').forEach(btn => {
+    btn.addEventListener('click', () => closeActionItem(btn.dataset.closeAction));
+  });
+  app.querySelectorAll('[data-postpone-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.modal = { type: 'action-postpone', actionId: btn.dataset.postponeAction };
+      render();
+    });
+  });
+  document.getElementById('action-new-cancel')?.addEventListener('click', closeNote);
+  document.getElementById('action-new-save')?.addEventListener('click', submitNewAction);
+  document.getElementById('postpone-cancel')?.addEventListener('click', closeNote);
+  document.getElementById('postpone-confirm')?.addEventListener('click', submitPostpone);
 
   app.querySelectorAll('[data-cell-row]').forEach(btn => {
     btn.addEventListener('click', () => onCellClick(btn.dataset.cellRow, Number(btn.dataset.cellDay)));
@@ -455,6 +819,67 @@ async function saveNote() {
 }
 
 // ============================================================================
+// Plan d'action : création, clôture, report
+// ============================================================================
+async function submitNewAction() {
+  const theme = document.getElementById('af-theme')?.value;
+  const priorite = Number(document.getElementById('af-priorite')?.value || 3);
+  const probleme = document.getElementById('af-probleme')?.value.trim() || '';
+  const actionTxt = document.getElementById('af-action')?.value.trim() || '';
+  const pilote = document.getElementById('af-pilote')?.value.trim() || '';
+  const dateObjectif = document.getElementById('af-date')?.value || defaultObjectiveDate();
+
+  if (!probleme || !actionTxt || !pilote) {
+    const btn = document.getElementById('action-new-save');
+    if (btn) { btn.textContent = 'Merci de compléter tous les champs'; setTimeout(() => { if (btn) btn.textContent = "Créer l'action"; }, 1800); }
+    return;
+  }
+
+  const data = {
+    theme, priorite, probleme, action: actionTxt, pilote, dateObjectif,
+    dateCreation: todayISO(),
+    statut: 'ouverte',
+    nbReports: 0,
+    dateCloture: null,
+  };
+  state.modal = null;
+  render();
+  try {
+    await addActionItem(state.plantId, data);
+    render();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function closeActionItem(id) {
+  try {
+    await patchActionItem(state.plantId, id, { statut: 'cloturee', dateCloture: todayISO() });
+    render();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function submitPostpone() {
+  const { actionId } = state.modal;
+  const a = state.actions.find(x => x.id === actionId);
+  const newDate = document.getElementById('postpone-date')?.value;
+  if (!a || !newDate) return;
+  state.modal = null;
+  render();
+  try {
+    await patchActionItem(state.plantId, actionId, {
+      dateObjectif: newDate,
+      nbReports: (a.nbReports || 0) + 1,
+    });
+    render();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// ============================================================================
 // Abonnement aux données (plant/mois courant)
 // ============================================================================
 function resubscribe() {
@@ -465,6 +890,17 @@ function resubscribe() {
     state.states = states;
     state.comments = comments;
     state.loading = false;
+    render();
+  });
+}
+
+function resubscribeActions() {
+  if (state.actionsUnsubscribe) state.actionsUnsubscribe();
+  state.actionsLoading = true;
+  render();
+  state.actionsUnsubscribe = subscribeActions(state.plantId, (items) => {
+    state.actions = items;
+    state.actionsLoading = false;
     render();
   });
 }
@@ -525,13 +961,16 @@ function logout() {
 
   if (!USING_CLOUD) {
     resubscribe();
+    resubscribeActions();
   } else {
     renderChecking();
     authApi.onAuthStateChanged(firebaseAuth, (user) => {
       if (user) {
         resubscribe();
+        resubscribeActions();
       } else {
         if (state.unsubscribe) { state.unsubscribe(); state.unsubscribe = null; }
+        if (state.actionsUnsubscribe) { state.actionsUnsubscribe(); state.actionsUnsubscribe = null; }
         renderLogin();
       }
     });

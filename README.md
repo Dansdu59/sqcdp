@@ -73,13 +73,14 @@ GitHub Pages sur la branche.
    rules_version = '2';
    service cloud.firestore {
      match /databases/{database}/documents {
-       match /plants/{plantId}/months/{monthId} {
+       match /plants/{plantId}/{document=**} {
          allow read, write: if request.auth != null;
        }
      }
    }
    ```
-   Ces règles n'autorisent la lecture/écriture qu'aux personnes connectées via le mot de passe partagé (étape 3 bis ci-dessous) — sans connexion, tout accès est refusé.
+   Ces règles n'autorisent la lecture/écriture (tableau SQCDPE et plan d'action) qu'aux personnes connectées via le mot de passe partagé (étape 3 bis ci-dessous) — sans connexion, tout accès est refusé.
+   > Si vous aviez déjà publié l'ancienne version de ces règles (limitée à `months`), pensez à les remplacer par celle-ci : le plan d'action utilise une nouvelle collection `actions` qui doit aussi être couverte.
 6. Redéployez (`firebase deploy` ou re-glissez le dossier) : la synchronisation temps réel est active. Le bandeau d'avertissement orange disparaît automatiquement dans l'app.
 
 ## Étape 2 bis — Activer le mot de passe partagé (authentification)
@@ -109,6 +110,21 @@ modifications se synchronisent dès le retour du réseau).
 - Clic sur une case ou un voyant : fait tourner le statut gris → vert → rouge → gris.
 - Double-clic sur une case (ou l'icône ✎) : ouvre un commentaire pour ce jour et ce critère.
 - Flèches ‹ › : navigation mois par mois, l'historique est conservé indéfiniment.
+
+## Plan d'action
+
+Un second onglet "Plan d'action" (à côté de "Tableau SQCDPE") permet de saisir des actions correctives, typiquement suite à un indicateur rouge — mais aussi librement à tout moment.
+
+- Champs : date de création (automatique), thème (S/Q/C/D/P/E), problème, action à réaliser, pilote, date objectif, priorité (1/2/3)
+- **Clôturer** : marque l'action comme terminée avec la date du jour
+- **Reporter** : demande une nouvelle date objectif et incrémente un compteur de reports (visible sous forme de badge "↻ x2")
+- Colonne "Jours" : nombre de jours écoulés depuis la création, en rouge si l'action est en retard (date objectif dépassée et toujours ouverte)
+- Tri disponible : date la plus ancienne, priorité, pilote, jours écoulés — et filtres par statut (ouvertes/clôturées/toutes) et par thème
+- Chaque site a son propre plan d'action, indépendant des autres
+
+## Chrono de réunion
+
+Un petit chronomètre est visible en permanence dans l'en-tête (▶ démarrer/pause, ↺ réinitialiser). Il passe progressivement du vert au rouge à l'approche de 40 minutes, pour garder le point quotidien dans les temps. Le chrono n'est pas sauvegardé : il repart de zéro à chaque rechargement de page.
 
 ## Évolutions possibles
 

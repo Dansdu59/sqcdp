@@ -117,6 +117,37 @@ select, .nav-btn, .btn {
   width: auto; padding: 0 14px; height: 34px; font-size: 13px;
 }
 
+/* ---------- Timer ---------- */
+.timer {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel); border: 2px solid var(--line); border-radius: 8px;
+  padding: 5px 10px; transition: border-color .3s ease;
+}
+.timer.overtime { animation: pulse-overtime 1.4s ease-in-out infinite; }
+@keyframes pulse-overtime { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+.timer-display { font-family: 'Oswald', sans-serif; font-size: 17px; letter-spacing: 0.04em; min-width: 54px; text-align: center; }
+.timer-btn {
+  width: 24px; height: 24px; border-radius: 6px; border: none; background: #2C2F31; color: var(--text);
+  cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center;
+  transition: background-color .15s ease;
+}
+.timer-btn:hover { background: var(--neutral); }
+
+/* ---------- Tabs ---------- */
+.tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.tab-btn {
+  background: none; border: none; color: var(--text-muted); font-family: 'Oswald', sans-serif;
+  font-size: 14px; letter-spacing: 0.04em; padding: 10px 6px; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color .15s ease, border-color .15s ease;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--amber); border-bottom-color: var(--amber); }
+.tab-count {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px;
+  border-radius: 9px; background: var(--amber); color: #181A1C; font-size: 11px; font-weight: 700; padding: 0 5px;
+}
+.board-subnav { margin-bottom: 20px; }
+
 /* ---------- Sync banner ---------- */
 .banner {
   max-width: 1180px;
@@ -248,6 +279,61 @@ th { font-weight: 500; }
 .footer-note {
   max-width: 1180px; margin: 18px auto 0; font-size: 12px; color: var(--text-dim);
 }
+
+/* ---------- Plan d'action ---------- */
+.actions-toolbar {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: 12px; margin-bottom: 16px;
+}
+.actions-filters { display: flex; gap: 10px; flex-wrap: wrap; }
+.actions-filters select {
+  font-family: 'Inter', sans-serif; font-size: 13px; background: var(--panel); border: 1px solid var(--line);
+  color: var(--text); border-radius: 8px; padding: 8px 10px;
+}
+.actions-panel { padding: 12px; }
+.actions-table { width: 100%; border-collapse: separate; border-spacing: 0 6px; min-width: 980px; }
+.actions-table thead th {
+  text-align: left; font-size: 11px; letter-spacing: 0.06em; color: #7C8186; font-weight: 500;
+  padding: 0 10px 6px;
+}
+.actions-table tbody tr { background: #181A1C; }
+.actions-table tbody tr.overdue { box-shadow: inset 3px 0 0 var(--red); }
+.actions-table tbody tr.closed-row { opacity: 0.55; }
+.actions-table td { padding: 10px; font-size: 13px; vertical-align: top; border-top: 1px solid #24272A; border-bottom: 1px solid #24272A; }
+.actions-table td:first-child { border-left: 1px solid #24272A; border-radius: 8px 0 0 8px; }
+.actions-table td:last-child { border-right: 1px solid #24272A; border-radius: 0 8px 8px 0; }
+.actions-table td.nowrap { white-space: nowrap; }
+.actions-table td.wrap { max-width: 220px; white-space: normal; line-height: 1.4; color: #C9CCCE; }
+
+.theme-pill {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 22px;
+  padding: 0 6px; border-radius: 6px; font-family: 'Oswald', sans-serif; font-size: 12px; font-weight: 700;
+}
+.priority-pill {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 22px;
+  padding: 0 6px; border-radius: 6px; font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 700; color: #181A1C;
+}
+.report-badge { font-size: 12px; color: var(--amber); }
+.status-closed { font-size: 12px; color: var(--green); white-space: nowrap; }
+.row-actions { display: flex; gap: 6px; }
+.mini-btn {
+  border: none; border-radius: 6px; padding: 6px 10px; font-size: 11px; font-weight: 600; cursor: pointer;
+  white-space: nowrap; transition: filter .15s ease;
+}
+.mini-btn:hover { filter: brightness(1.12); }
+.mini-btn-green { background: var(--green); color: #EDEAE0; }
+.mini-btn-amber { background: var(--amber); color: #181A1C; }
+
+/* ---------- Formulaires (modales) ---------- */
+.modal.modal-wide { max-width: 560px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.form-grid label, .modal label.full { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+.modal label.full { display: flex; }
+.modal input, .modal select {
+  font-family: 'Inter', sans-serif; font-size: 13px; background: #181A1C; border: 1px solid var(--line);
+  color: var(--text); border-radius: 8px; padding: 9px 10px;
+}
+.modal textarea { font-size: 13px; }
 
 /* ---------- Modal ---------- */
 .modal-overlay {
