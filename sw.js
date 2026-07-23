@@ -1,4 +1,4 @@
-const CACHE_NAME = 'safety-first-v4';
+const CACHE_NAME = 'safety-first-v5';
 const APP_SHELL = [
   './',
   './index.html',

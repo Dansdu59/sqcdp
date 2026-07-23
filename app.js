@@ -36,6 +36,8 @@ let firestoreDb = null;
 let firestoreApi = null;
 let firebaseAuth = null;
 let authApi = null;
+let storageRef = null;
+let storageApi = null;
 const USING_CLOUD = isFirebaseConfigured();
 
 async function initFirebaseIfNeeded() {
@@ -43,6 +45,7 @@ async function initFirebaseIfNeeded() {
   const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js');
   const fs = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js');
   const authMod = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js');
+  const storageMod = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-storage.js');
   const app = initializeApp(FIREBASE_CONFIG);
 
   firestoreDb = fs.getFirestore(app);
@@ -60,6 +63,13 @@ async function initFirebaseIfNeeded() {
     console.warn('Persistance de connexion indisponible :', e.message);
   }
   authApi = authMod;
+
+  try {
+    storageRef = storageMod.getStorage(app);
+    storageApi = storageMod;
+  } catch (e) {
+    console.warn('Firebase Storage indisponible :', e.message);
+  }
 }
 
 function docKey(plantId, year, month) {
@@ -76,7 +86,7 @@ function subscribe(plantId, year, month, callback) {
     const ref = firestoreApi.doc(firestoreDb, 'plants', plantId, 'months', `${year}-${String(month).padStart(2,'0')}`);
     return firestoreApi.onSnapshot(ref, (snap) => {
       const data = snap.exists() ? snap.data() : {};
-      callback({ states: data.states || {}, comments: data.comments || {} });
+      callback({ states: data.states || {}, comments: data.comments || {}, successes: data.successes || {} });
     }, (err) => {
       console.error('Erreur de synchronisation Firestore :', err);
     });
@@ -86,9 +96,9 @@ function subscribe(plantId, year, month, callback) {
   const read = () => {
     try {
       const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : { states: {}, comments: {} };
+      return raw ? JSON.parse(raw) : { states: {}, comments: {}, successes: {} };
     } catch (e) {
-      return { states: {}, comments: {} };
+      return { states: {}, comments: {}, successes: {} };
     }
   };
   callback(read());
@@ -97,14 +107,14 @@ function subscribe(plantId, year, month, callback) {
   return () => window.removeEventListener('storage', onStorage);
 }
 
-async function saveData(plantId, year, month, { states, comments }) {
+async function saveData(plantId, year, month, { states, comments, successes }) {
   if (USING_CLOUD && firestoreDb) {
     const ref = firestoreApi.doc(firestoreDb, 'plants', plantId, 'months', `${year}-${String(month).padStart(2,'0')}`);
-    await firestoreApi.setDoc(ref, { states, comments, updatedAt: Date.now() }, { merge: true });
+    await firestoreApi.setDoc(ref, { states, comments, successes, updatedAt: Date.now() }, { merge: true });
     return;
   }
   const key = 'sf_' + docKey(plantId, year, month);
-  localStorage.setItem(key, JSON.stringify({ states, comments }));
+  localStorage.setItem(key, JSON.stringify({ states, comments, successes }));
 }
 
 // ============================================================================
@@ -134,8 +144,8 @@ function subscribeActions(plantId, callback) {
 async function addActionItem(plantId, data) {
   if (USING_CLOUD && firestoreDb) {
     const col = firestoreApi.collection(firestoreDb, 'plants', plantId, 'actions');
-    await firestoreApi.addDoc(col, data);
-    return;
+    const docRef = await firestoreApi.addDoc(col, data);
+    return docRef.id;
   }
   const key = actionsKey(plantId);
   const items = JSON.parse(localStorage.getItem(key) || '[]');
@@ -143,6 +153,7 @@ async function addActionItem(plantId, data) {
   items.unshift({ id, ...data });
   localStorage.setItem(key, JSON.stringify(items));
   state.actions = items;
+  return id;
 }
 
 async function patchActionItem(plantId, id, patch) {
@@ -157,6 +168,24 @@ async function patchActionItem(plantId, id, patch) {
   if (idx !== -1) items[idx] = { ...items[idx], ...patch };
   localStorage.setItem(key, JSON.stringify(items));
   state.actions = items;
+}
+
+const MAX_ATTACHMENT_MB = 8;
+
+async function uploadActionAttachment(plantId, actionId, file) {
+  if (!USING_CLOUD || !storageRef) {
+    throw new Error('Les pièces jointes nécessitent le mode cloud (Firebase Storage).');
+  }
+  if (file.size > MAX_ATTACHMENT_MB * 1024 * 1024) {
+    throw new Error(`Fichier trop volumineux (max ${MAX_ATTACHMENT_MB} Mo).`);
+  }
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `plants/${plantId}/actions/${actionId}/${Date.now()}_${safeName}`;
+  const fileRef = storageApi.ref(storageRef, path);
+  await storageApi.uploadBytes(fileRef, file);
+  const url = await storageApi.getDownloadURL(fileRef);
+  await patchActionItem(plantId, actionId, { attachmentUrl: url, attachmentName: file.name });
+  return url;
 }
 
 // ============================================================================
@@ -222,6 +251,7 @@ let state = {
   month: today.getMonth() + 1,
   states: {},
   comments: {},
+  successes: {},
   loading: true,
   unsubscribe: null,
   modal: null, // { type: 'note'|'confirm'|'action-new'|'action-postpone', ... }
@@ -354,6 +384,7 @@ function renderBoardBody() {
       <span class="legend-item"><span class="legend-dot" style="background:${STATE_STYLE.neutral.bg}"></span>Non renseigné</span>
       <span class="legend-item"><span class="legend-dot" style="background:#E08B2E;border-radius:50%;width:14px;height:14px;"></span>Commentaire (s'affiche au clic)</span>
       <span class="legend-item"><span class="legend-dot" style="background:#5A5F62;width:8px;height:8px;border-radius:50%"></span>Jour passé (confirmation requise)</span>
+      <span class="legend-item">🌟 Succès de la veille (n'importe quel jour)</span>
     </div>
 
     <div class="grid-panel">
@@ -367,6 +398,7 @@ function renderBoardBody() {
 }
 
 function renderTodayPanel(todayDay) {
+  const successText = state.successes[todayDay] || '';
   return `
     <div class="today-panel">
       <div class="today-panel-head">
@@ -386,6 +418,13 @@ function renderTodayPanel(todayDay) {
             </div>`;
         }).join('')}
       </div>
+      <button class="success-card" data-success-day="${todayDay}">
+        <span class="success-star">🌟</span>
+        <div class="success-body">
+          <div class="success-label">Succès de la veille</div>
+          <div class="success-text">${successText ? escapeHtml(successText) : 'Cliquez pour noter ce qui a bien fonctionné hier…'}</div>
+        </div>
+      </button>
     </div>`;
 }
 
@@ -407,6 +446,25 @@ function renderGrid(totalDays, isCurrentMonth, todayDay) {
         </tr>
       </thead>
       <tbody>
+        <tr class="success-row">
+          <td>
+            <div class="row-label" style="border-left:4px solid #E08B2E">
+              <span class="row-letter" style="color:#E08B2E">🌟</span>
+              <span class="row-name">Succès</span>
+            </div>
+          </td>
+          ${days.map(d => {
+            const has = !!state.successes[d];
+            const isToday = isCurrentMonth && d === todayDay;
+            return `
+              <td style="padding:0">
+                <button class="success-cell ${has ? 'filled' : ''}" data-success-day="${d}"
+                  title="${has ? escapeHtml(state.successes[d]) : 'Ajouter un succès pour ce jour'}"
+                  style="border:${isToday ? '2px solid #E08B2E' : '1px solid #33373A'}">${has ? '★' : '☆'}</button>
+              </td>`;
+          }).join('')}
+          <td></td>
+        </tr>
         ${ROWS.map(({ key, label, accent }) => {
           let green = 0, filled = 0;
           days.forEach(d => {
@@ -538,12 +596,13 @@ function renderActionsTable(items) {
               <td class="nowrap"><span class="priority-pill" style="background:${pr.bg}">${pr.label}</span></td>
               <td class="nowrap">${a.nbReports ? `<span class="report-badge">↻ ${a.nbReports}</span>` : '—'}</td>
               <td class="nowrap">
-                ${closed
-                  ? `<span class="status-closed">✓ Clôturée${a.dateCloture ? ' le ' + formatFR(a.dateCloture) : ''}</span>`
-                  : `<div class="row-actions">
-                      <button class="mini-btn mini-btn-green" data-close-action="${a.id}">Clôturer</button>
-                      <button class="mini-btn mini-btn-amber" data-postpone-action="${a.id}">Reporter</button>
-                    </div>`}
+                <div class="row-actions">
+                  ${!closed ? `
+                    <button class="mini-btn mini-btn-green" data-close-action="${a.id}">Clôturer</button>
+                    <button class="mini-btn mini-btn-amber" data-postpone-action="${a.id}">Reporter</button>
+                  ` : `<span class="status-closed">✓ Clôturée${a.dateCloture ? ' le ' + formatFR(a.dateCloture) : ''}</span>`}
+                  <button class="mini-btn mini-btn-attach ${a.attachmentUrl ? 'has-attachment' : ''}" data-attach-action="${a.id}" title="${a.attachmentUrl ? 'Voir / remplacer la pièce jointe' : 'Ajouter une pièce jointe'}">📎${a.attachmentUrl ? '' : ''}</button>
+                </div>
               </td>
             </tr>`;
         }).join('')}
@@ -619,9 +678,17 @@ function renderModal() {
             <input id="af-pilote" type="text" placeholder="Nom du responsable" />
           </label>
           <label>Date objectif
-            <input id="af-date" type="date" value="${defaultObjectiveDate()}" />
+            <div class="date-with-picker">
+              <input id="af-date" type="date" value="${defaultObjectiveDate()}" />
+              <button type="button" class="calendar-btn" data-open-picker="af-date" title="Ouvrir le calendrier">📅</button>
+            </div>
           </label>
         </div>
+        <label class="full">Pièce jointe (photo, document) — optionnel
+          ${USING_CLOUD
+            ? `<input id="af-file" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" />`
+            : `<span style="color:var(--text-dim);font-size:12px;">Disponible uniquement en mode cloud (voir README.md).</span>`}
+        </label>
         <div class="modal-actions">
           <button class="btn-cancel" id="action-new-cancel">Annuler</button>
           <button class="btn-save" id="action-new-save">Créer l'action</button>
@@ -637,11 +704,49 @@ function renderModal() {
         <div class="modal-title warn">REPORTER L'ACTION</div>
         <div class="modal-sub">${escapeHtml(a.action)}</div>
         <div class="modal-body-text">Nouvelle date objectif ${a.nbReports ? `(déjà reportée ${a.nbReports} fois)` : ''} :</div>
-        <input id="postpone-date" type="date" value="${a.dateObjectif || defaultObjectiveDate()}"
-          style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#181A1C;color:var(--text);font-family:'Inter',sans-serif;font-size:13px;margin-top:6px;box-sizing:border-box;" />
+        <div class="date-with-picker" style="margin-top:6px;">
+          <input id="postpone-date" type="date" value="${a.dateObjectif || defaultObjectiveDate()}" />
+          <button type="button" class="calendar-btn" data-open-picker="postpone-date" title="Ouvrir le calendrier">📅</button>
+        </div>
         <div class="modal-actions">
           <button class="btn-cancel" id="postpone-cancel">Annuler</button>
           <button class="btn-save" id="postpone-confirm">Confirmer le report</button>
+        </div>
+      </div>`;
+  }
+
+  if (type === 'action-attachment') {
+    const a = state.actions.find(x => x.id === state.modal.actionId);
+    if (!a) return '';
+    return `
+      <div class="modal">
+        <div class="modal-title">PIÈCE JOINTE</div>
+        <div class="modal-sub">${escapeHtml(a.action)}</div>
+        ${a.attachmentUrl ? `
+          <div class="modal-body-text">Fichier actuel : <a href="${a.attachmentUrl}" target="_blank" rel="noopener" style="color:var(--amber)">${escapeHtml(a.attachmentName || 'ouvrir')}</a></div>
+        ` : `<div class="modal-body-text">Aucune pièce jointe pour le moment.</div>`}
+        ${USING_CLOUD ? `
+          <input id="attach-file" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="margin-top:8px;" />
+          <div id="attach-status" style="font-size:12px;color:var(--text-dim);margin-top:8px;"></div>
+        ` : `<div style="color:var(--text-dim);font-size:12px;margin-top:8px;">Disponible uniquement en mode cloud (voir README.md).</div>`}
+        <div class="modal-actions">
+          <button class="btn-cancel" id="attach-cancel">Fermer</button>
+          ${USING_CLOUD ? `<button class="btn-save" id="attach-upload">Envoyer</button>` : ''}
+        </div>
+      </div>`;
+  }
+
+  if (type === 'success') {
+    const { day } = state.modal;
+    const text = state.successes[day] || '';
+    return `
+      <div class="modal">
+        <div class="modal-title">🌟 SUCCÈS DE LA VEILLE</div>
+        <div class="modal-sub">Jour ${day} ${MONTHS_FR[state.month - 1]} ${state.year}</div>
+        <textarea id="success-textarea" rows="4" placeholder="Qu'est-ce qui a bien fonctionné hier ?">${text}</textarea>
+        <div class="modal-actions">
+          <button class="btn-cancel" id="success-cancel">Annuler</button>
+          <button class="btn-save" id="success-save">Enregistrer</button>
         </div>
       </div>`;
   }
@@ -703,6 +808,29 @@ function attachEvents() {
   document.getElementById('postpone-cancel')?.addEventListener('click', closeNote);
   document.getElementById('postpone-confirm')?.addEventListener('click', submitPostpone);
 
+  app.querySelectorAll('[data-attach-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.modal = { type: 'action-attachment', actionId: btn.dataset.attachAction };
+      render();
+    });
+  });
+  document.getElementById('attach-cancel')?.addEventListener('click', closeNote);
+  document.getElementById('attach-upload')?.addEventListener('click', submitAttachment);
+
+  app.querySelectorAll('[data-open-picker]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const input = document.getElementById(btn.dataset.openPicker);
+      if (!input) return;
+      try { input.showPicker(); } catch (e) { input.focus(); input.click(); }
+    });
+  });
+
+  app.querySelectorAll('[data-success-day]').forEach(btn => {
+    btn.addEventListener('click', () => { state.modal = { type: 'success', day: Number(btn.dataset.successDay) }; render(); });
+  });
+  document.getElementById('success-cancel')?.addEventListener('click', closeNote);
+  document.getElementById('success-save')?.addEventListener('click', saveSuccess);
+
   app.querySelectorAll('[data-cell-row]').forEach(btn => {
     btn.addEventListener('click', () => onCellClick(btn.dataset.cellRow, Number(btn.dataset.cellDay)));
     btn.addEventListener('dblclick', () => {
@@ -755,11 +883,23 @@ let toastTimer = null;
 function showToast(title, text) {
   const toast = document.getElementById('toast');
   if (!toast) return;
+  toast.classList.remove('toast-success');
   document.getElementById('toast-title').textContent = title;
   document.getElementById('toast-text').textContent = text;
   toast.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove('show'), 4000);
+}
+
+function showSaveToast() {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.classList.add('toast-success');
+  document.getElementById('toast-title').textContent = '✓ Enregistré';
+  document.getElementById('toast-text').textContent = '';
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 1400);
 }
 
 function changeMonth(delta) {
@@ -786,8 +926,9 @@ async function toggleCell(rowKey, day) {
   state.states = updatedStates;
   render();
   try {
-    await saveData(state.plantId, state.year, state.month, { states: updatedStates, comments: state.comments });
+    await saveData(state.plantId, state.year, state.month, { states: updatedStates, comments: state.comments, successes: state.successes });
     flashStatus('ok');
+    showSaveToast();
   } catch (e) {
     console.error(e);
     flashStatus('err');
@@ -812,7 +953,25 @@ async function saveNote() {
   state.modal = null;
   render();
   try {
-    await saveData(state.plantId, state.year, state.month, { states: state.states, comments: updatedComments });
+    await saveData(state.plantId, state.year, state.month, { states: state.states, comments: updatedComments, successes: state.successes });
+    showSaveToast();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function saveSuccess() {
+  const ta = document.getElementById('success-textarea');
+  const text = ta ? ta.value.trim() : '';
+  const { day } = state.modal;
+  const updatedSuccesses = { ...state.successes };
+  if (text) updatedSuccesses[day] = text; else delete updatedSuccesses[day];
+  state.successes = updatedSuccesses;
+  state.modal = null;
+  render();
+  try {
+    await saveData(state.plantId, state.year, state.month, { states: state.states, comments: state.comments, successes: updatedSuccesses });
+    showSaveToast();
   } catch (e) {
     console.error(e);
   }
@@ -828,6 +987,8 @@ async function submitNewAction() {
   const actionTxt = document.getElementById('af-action')?.value.trim() || '';
   const pilote = document.getElementById('af-pilote')?.value.trim() || '';
   const dateObjectif = document.getElementById('af-date')?.value || defaultObjectiveDate();
+  const fileInput = document.getElementById('af-file');
+  const file = fileInput && fileInput.files && fileInput.files[0];
 
   if (!probleme || !actionTxt || !pilote) {
     const btn = document.getElementById('action-new-save');
@@ -841,12 +1002,24 @@ async function submitNewAction() {
     statut: 'ouverte',
     nbReports: 0,
     dateCloture: null,
+    attachmentUrl: null,
+    attachmentName: null,
   };
   state.modal = null;
   render();
   try {
-    await addActionItem(state.plantId, data);
+    const id = await addActionItem(state.plantId, data);
     render();
+    showSaveToast();
+    if (file) {
+      try {
+        await uploadActionAttachment(state.plantId, id, file);
+        render();
+      } catch (err) {
+        console.error(err);
+        showToast('Pièce jointe non envoyée', err.message);
+      }
+    }
   } catch (e) {
     console.error(e);
   }
@@ -856,6 +1029,7 @@ async function closeActionItem(id) {
   try {
     await patchActionItem(state.plantId, id, { statut: 'cloturee', dateCloture: todayISO() });
     render();
+    showSaveToast();
   } catch (e) {
     console.error(e);
   }
@@ -874,11 +1048,29 @@ async function submitPostpone() {
       nbReports: (a.nbReports || 0) + 1,
     });
     render();
+    showSaveToast();
   } catch (e) {
     console.error(e);
   }
 }
 
+async function submitAttachment() {
+  const { actionId } = state.modal;
+  const fileInput = document.getElementById('attach-file');
+  const file = fileInput && fileInput.files && fileInput.files[0];
+  const statusEl = document.getElementById('attach-status');
+  if (!file) { if (statusEl) statusEl.textContent = 'Choisissez un fichier.'; return; }
+  if (statusEl) statusEl.textContent = 'Envoi en cours…';
+  try {
+    await uploadActionAttachment(state.plantId, actionId, file);
+    state.modal = null;
+    render();
+    showSaveToast();
+  } catch (e) {
+    console.error(e);
+    if (statusEl) statusEl.textContent = e.message || 'Échec de l\'envoi.';
+  }
+}
 // ============================================================================
 // Abonnement aux données (plant/mois courant)
 // ============================================================================
@@ -886,9 +1078,10 @@ function resubscribe() {
   if (state.unsubscribe) state.unsubscribe();
   state.loading = true;
   render();
-  state.unsubscribe = subscribe(state.plantId, state.year, state.month, ({ states, comments }) => {
+  state.unsubscribe = subscribe(state.plantId, state.year, state.month, ({ states, comments, successes }) => {
     state.states = states;
     state.comments = comments;
+    state.successes = successes || {};
     state.loading = false;
     render();
   });

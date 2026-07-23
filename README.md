@@ -126,6 +126,40 @@ Un second onglet "Plan d'action" (à côté de "Tableau SQCDPE") permet de saisi
 
 Un petit chronomètre est visible en permanence dans l'en-tête (▶ démarrer/pause, ↺ réinitialiser). Il passe progressivement du vert au rouge à l'approche de 40 minutes, pour garder le point quotidien dans les temps. Le chrono n'est pas sauvegardé : il repart de zéro à chaque rechargement de page.
 
+## Étape 2 ter — Activer les pièces jointes (Firebase Storage)
+
+Pour pouvoir joindre une photo ou un document à une action du plan d'action :
+
+1. Dans la console Firebase, menu de gauche → **Build → Storage** → **Get started** → suivez l'assistant (mode production, même région que Firestore).
+2. Onglet **Rules** de Storage, remplacez par :
+   ```
+   rules_version = '2';
+   service firebase.storage {
+     match /b/{bucket}/o {
+       match /plants/{plantId}/{allPaths=**} {
+         allow read, write: if request.auth != null;
+       }
+     }
+   }
+   ```
+   Publiez. Sans cette étape, les pièces jointes échoueront avec une erreur — le reste de l'app (tableau, plan d'action sans pièce jointe) continue de fonctionner normalement.
+
+## Succès de la veille
+
+Un petit encart "🌟 Succès de la veille" apparaît sous le panneau "Point du jour" — cliquez dessus pour noter ce qui a bien fonctionné la veille. Une ligne dédiée en haut du tableau mensuel (icône étoile) permet aussi de consulter ou compléter le succès de n'importe quel autre jour du mois, sans restriction (pas de confirmation requise, contrairement aux statuts S/Q/C/D/P/E).
+
+## Confirmation d'enregistrement
+
+Chaque sauvegarde (statut, commentaire, succès, action) affiche désormais un petit message "✓ Enregistré" en bas de l'écran, pour confirmer visuellement la prise en compte — y compris lors de la modification d'un jour passé après confirmation.
+
+## Pièces jointes sur les actions
+
+Dans le formulaire de nouvelle action, un champ optionnel permet de joindre une photo ou un document dès la création. Sur chaque ligne du plan d'action, le bouton 📎 permet d'ajouter, remplacer ou consulter la pièce jointe à tout moment (avant ou après la clôture). Nécessite Firebase Storage (voir Étape 2 ter) ; indisponible en mode local.
+
+## Calendrier pour les dates
+
+Les champs de date (création d'action, report) affichent un bouton 📅 à côté du champ : il ouvre directement le sélecteur de calendrier du navigateur pour éviter la saisie manuelle.
+
 ## Évolutions possibles
 
 - Authentification (mot de passe unique ou comptes nominatifs) pour restreindre l'accès en écriture.

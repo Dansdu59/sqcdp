@@ -367,6 +367,41 @@ th { font-weight: 500; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
 .toast-title { font-family: 'Oswald', sans-serif; font-size: 12px; letter-spacing: 0.08em; color: var(--amber); margin-bottom: 4px; }
 .toast-text { font-size: 13px; color: var(--text); line-height: 1.4; }
+.toast.toast-success { border-left-color: var(--green); }
+
+/* ---------- Succès de la veille ---------- */
+.success-card {
+  width: 100%; margin-top: 14px; display: flex; align-items: center; gap: 12px;
+  background: #181A1C; border: 1px dashed #3A3E40; border-radius: 12px; padding: 12px 16px;
+  cursor: pointer; text-align: left; transition: border-color .15s ease, background-color .15s ease;
+}
+.success-card:hover { border-color: var(--amber); background: #1C1F21; }
+.success-star { font-size: 22px; }
+.success-body { display: flex; flex-direction: column; gap: 2px; }
+.success-label { font-family: 'Oswald', sans-serif; font-size: 12px; letter-spacing: 0.08em; color: var(--amber); }
+.success-text { font-size: 13px; color: var(--text-muted); line-height: 1.4; }
+
+.success-row td { padding-bottom: 4px; }
+.success-cell {
+  width: 30px; height: 30px; border-radius: 7px; background: #22252A; cursor: pointer;
+  font-size: 15px; color: #5A5F62; transition: transform .12s ease, color .15s ease, background-color .15s ease;
+}
+.success-cell:hover { transform: translateY(-1px); }
+.success-cell.filled { color: var(--amber); background: #2A2417; }
+
+/* ---------- Sélecteur de date avec calendrier ---------- */
+.date-with-picker { display: flex; gap: 6px; align-items: center; }
+.date-with-picker input[type="date"] { flex: 1; }
+.calendar-btn {
+  width: 36px; height: 36px; flex-shrink: 0; border-radius: 8px; border: 1px solid var(--line);
+  background: #181A1C; color: var(--text); font-size: 15px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: background-color .15s ease;
+}
+.calendar-btn:hover { background: var(--neutral); }
+
+/* ---------- Pièce jointe ---------- */
+.mini-btn-attach { background: #2C2F31; color: var(--text-muted); }
+.mini-btn-attach.has-attachment { background: var(--amber); color: #181A1C; }
 
 @media (max-width: 600px) {
   h1 { font-size: 28px; }
