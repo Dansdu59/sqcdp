@@ -403,6 +403,29 @@ th { font-weight: 500; }
 .mini-btn-attach { background: #2C2F31; color: var(--text-muted); }
 .mini-btn-attach.has-attachment { background: var(--amber); color: #181A1C; }
 
+/* ---------- Synthèse multi-sites ---------- */
+.synthesis-controls {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.synthesis-plant-picker { display: flex; gap: 8px; flex-wrap: wrap; }
+.plant-chip {
+  background: var(--panel); border: 1px solid var(--line); color: var(--text-muted);
+  border-radius: 20px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+  transition: all .15s ease;
+}
+.plant-chip:hover { border-color: var(--amber); color: var(--text); }
+.plant-chip.active { background: var(--amber); border-color: var(--amber); color: #181A1C; font-weight: 600; }
+.synthesis-hint { font-size: 12px; color: var(--text-dim); margin-bottom: 16px; }
+.synthesis-table { width: 100%; border-collapse: separate; border-spacing: 0 6px; min-width: 640px; }
+.synthesis-table thead th { text-align: center; font-family: 'Oswald', sans-serif; font-size: 13px; color: var(--text-muted); padding-bottom: 6px; }
+.synthesis-table thead th:first-child { text-align: left; }
+.synthesis-table tbody tr { background: #181A1C; }
+.synthesis-table td { padding: 8px 10px; border-top: 1px solid #24272A; border-bottom: 1px solid #24272A; text-align: center; }
+.synthesis-table td:first-child { border-left: 1px solid #24272A; border-radius: 8px 0 0 8px; text-align: left; }
+.synthesis-table td:last-child { border-right: 1px solid #24272A; border-radius: 0 8px 8px 0; }
+.synthesis-cell { width: 32px; height: 32px; border-radius: 7px; cursor: pointer; }
+.synthesis-star { cursor: pointer; font-size: 16px; }
+
 @media (max-width: 600px) {
   h1 { font-size: 28px; }
   .lamp-card { flex: 1 1 100px; }

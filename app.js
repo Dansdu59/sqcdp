@@ -262,7 +262,32 @@ let state = {
   actionsSort: 'dateAsc', // 'dateAsc' | 'priority' | 'pilote' | 'daysDesc'
   actionsStatusFilter: 'open', // 'open' | 'closed' | 'all'
   actionsThemeFilter: 'all',
+  synthesisDate: todayISODefault(),
+  synthesisSelected: loadSynthesisSelection(),
+  synthesisData: {},
+  synthesisLoading: {},
+  synthesisUnsubs: {},
 };
+
+function todayISODefault() {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
+function loadSynthesisSelection() {
+  try {
+    const raw = localStorage.getItem('sf_synthesis_plants');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    }
+  } catch (e) { /* ignore */ }
+  return PLANTS.map(p => p.id); // par défaut : tous les sites
+}
+
+function saveSynthesisSelection(ids) {
+  localStorage.setItem('sf_synthesis_plants', JSON.stringify(ids));
+}
 
 // ---------------------------------------------------------------------------
 // Chrono de réunion (40 minutes cible)
@@ -317,6 +342,7 @@ const app = document.getElementById('app');
 
 function render() {
   const plant = PLANTS.find(p => p.id === state.plantId);
+  const isSynthesis = state.activeTab === 'synthesis';
 
   app.innerHTML = `
     ${!USING_CLOUD ? `
@@ -326,14 +352,15 @@ function render() {
 
     <div class="header">
       <div>
-        <div class="eyebrow">SITE : ${plant.label.toUpperCase()}</div>
-        <h1>Usine de ${plant.label} <span class="dash">–</span> <span class="accent">Safety First</span></h1>
-        <p class="subtitle">Sécurité · Qualité · Coûts · Délais · Personnel · Environnement — point quotidien de l'équipe de direction</p>
+        <div class="eyebrow">${isSynthesis ? 'VUE MULTI-SITES' : 'SITE : ' + plant.label.toUpperCase()}</div>
+        <h1>${isSynthesis ? `Synthèse <span class="dash">–</span> <span class="accent">Safety First</span>` : `Usine de ${plant.label} <span class="dash">–</span> <span class="accent">Safety First</span>`}</h1>
+        <p class="subtitle">${isSynthesis ? "Comparaison des indicateurs SQCDPE entre sites, pour un jour donné" : "Sécurité · Qualité · Coûts · Délais · Personnel · Environnement — point quotidien de l'équipe de direction"}</p>
       </div>
       <div class="controls">
+        ${!isSynthesis ? `
         <select id="plant-select">
           ${PLANTS.map(p => `<option value="${p.id}" ${p.id === state.plantId ? 'selected' : ''}>${p.label}</option>`).join('')}
-        </select>
+        </select>` : ''}
         <div class="timer" id="meeting-timer" style="border-color:${timerColor(meetingTimer.seconds)}77">
           <span class="timer-display" id="meeting-timer-display" style="color:${timerColor(meetingTimer.seconds)}">${formatTimer(meetingTimer.seconds)}</span>
           <button class="timer-btn" id="timer-start" title="Démarrer / mettre en pause">${meetingTimer.running ? '⏸' : '▶'}</button>
@@ -346,9 +373,10 @@ function render() {
     <div class="tabs">
       <button class="tab-btn ${state.activeTab === 'board' ? 'active' : ''}" id="tab-board">Tableau SQCDPE</button>
       <button class="tab-btn ${state.activeTab === 'actions' ? 'active' : ''}" id="tab-actions">Plan d'action${openActionsCount() ? ` <span class="tab-count">${openActionsCount()}</span>` : ''}</button>
+      <button class="tab-btn ${state.activeTab === 'synthesis' ? 'active' : ''}" id="tab-synthesis">Synthèse multi-sites</button>
     </div>
 
-    ${state.activeTab === 'board' ? renderBoardBody() : renderActionsBody()}
+    ${state.activeTab === 'board' ? renderBoardBody() : state.activeTab === 'actions' ? renderActionsBody() : renderSynthesisBody()}
 
     <div class="modal-overlay ${state.modal ? '' : 'hidden'}" id="modal-overlay">
       ${state.modal ? renderModal() : ''}
@@ -615,6 +643,85 @@ function escapeHtml(str) {
   return str.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function parseISODate(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return { year: y, month: m, day: d };
+}
+
+function renderSynthesisBody() {
+  const { year, month, day } = parseISODate(state.synthesisDate);
+  const isToday = state.synthesisDate === todayISODefault();
+
+  return `
+    <div class="synthesis-controls">
+      <div class="date-with-picker">
+        <input id="synthesis-date" type="date" value="${state.synthesisDate}" />
+        <button type="button" class="calendar-btn" data-open-picker="synthesis-date" title="Ouvrir le calendrier">📅</button>
+      </div>
+      ${!isToday ? `<button class="btn nav-btn btn-today" id="synthesis-today">Aujourd'hui</button>` : ''}
+      <div class="synthesis-plant-picker">
+        ${PLANTS.map(p => `
+          <button class="plant-chip ${state.synthesisSelected.includes(p.id) ? 'active' : ''}" data-toggle-plant="${p.id}">${p.label}</button>
+        `).join('')}
+      </div>
+    </div>
+    <div class="synthesis-hint">La sélection des sites est enregistrée automatiquement sur cet appareil.</div>
+
+    <div class="grid-panel">
+      ${renderSynthesisTable(year, month, day)}
+    </div>
+
+    <div class="footer-note">Vue en lecture seule — pour modifier un statut, ouvrez le tableau du site concerné. Clic sur une case : voir le commentaire s'il existe.</div>`;
+}
+
+function renderSynthesisTable(year, month, day) {
+  if (!state.synthesisSelected.length) {
+    return `<div style="padding:30px;text-align:center;color:var(--text-muted)">Sélectionnez au moins un site ci-dessus.</div>`;
+  }
+  return `
+    <table class="synthesis-table">
+      <thead>
+        <tr>
+          <th style="width:160px">Site</th>
+          ${ROWS.map(r => `<th style="color:${r.accent}">${r.key}</th>`).join('')}
+          <th>🌟</th>
+          <th>Alertes</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${state.synthesisSelected.map(plantId => {
+          const plant = PLANTS.find(p => p.id === plantId);
+          const loading = state.synthesisLoading[plantId];
+          const data = state.synthesisData[plantId];
+          if (loading || !data) {
+            return `<tr><td class="nowrap">${plant ? plant.label : plantId}</td><td colspan="${ROWS.length + 2}" style="color:var(--text-muted)">Chargement…</td></tr>`;
+          }
+          let redCount = 0;
+          const successText = data.successes ? data.successes[day] : null;
+          return `
+            <tr>
+              <td class="nowrap"><strong>${plant ? plant.label : plantId}</strong></td>
+              ${ROWS.map(r => {
+                const s = data.states[`${r.key}-${day}`] || 'neutral';
+                if (s === 'red') redCount++;
+                const st = STATE_STYLE[s];
+                const hasNote = !!(data.comments && data.comments[`${r.key}-${day}`]);
+                return `<td style="padding:6px;">
+                  <button class="cell-btn synthesis-cell" data-synth-row="${r.key}" data-synth-plant="${plantId}"
+                    title="${r.label}${hasNote ? ' · commentaire disponible' : ''}"
+                    style="background:${st.bg};border:1px solid ${st.border};">
+                    ${hasNote ? '<span class="note-dot"></span>' : ''}
+                  </button>
+                </td>`;
+              }).join('')}
+              <td style="text-align:center;">${successText ? `<span class="success-cell filled synthesis-star" data-synth-success="${plantId}" title="${escapeHtml(successText)}">★</span>` : '<span style="color:#3A3E40">☆</span>'}</td>
+              <td class="nowrap" style="color:${redCount ? 'var(--red)' : 'var(--text-dim)'}">${redCount ? `${redCount} écart${redCount > 1 ? 's' : ''}` : '—'}</td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
 function renderModal() {
   const { type } = state.modal;
 
@@ -773,6 +880,40 @@ function attachEvents() {
 
   document.getElementById('tab-board')?.addEventListener('click', () => { state.activeTab = 'board'; render(); });
   document.getElementById('tab-actions')?.addEventListener('click', () => { state.activeTab = 'actions'; render(); });
+  document.getElementById('tab-synthesis')?.addEventListener('click', () => {
+    state.activeTab = 'synthesis';
+    if (!Object.keys(state.synthesisUnsubs).length) resubscribeSynthesis();
+    else render();
+  });
+
+  document.getElementById('synthesis-date')?.addEventListener('change', (e) => changeSynthesisDate(e.target.value));
+  document.getElementById('synthesis-today')?.addEventListener('click', () => changeSynthesisDate(todayISODefault()));
+  app.querySelectorAll('[data-toggle-plant]').forEach(btn => {
+    btn.addEventListener('click', () => togglePlantSynthesis(btn.dataset.togglePlant));
+  });
+  app.querySelectorAll('[data-synth-row]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const plantId = btn.dataset.synthPlant;
+      const rowKey = btn.dataset.synthRow;
+      const { day } = parseISODate(state.synthesisDate);
+      const data = state.synthesisData[plantId];
+      const comment = data && data.comments && data.comments[`${rowKey}-${day}`];
+      if (comment) {
+        const label = ROWS.find(r => r.key === rowKey)?.label || '';
+        const plantLabel = PLANTS.find(p => p.id === plantId)?.label || plantId;
+        showToast(`${plantLabel} · ${label}`, comment);
+      }
+    });
+  });
+  app.querySelectorAll('[data-synth-success]').forEach(el => {
+    el.addEventListener('click', () => {
+      const plantId = el.dataset.synthSuccess;
+      const { day } = parseISODate(state.synthesisDate);
+      const text = state.synthesisData[plantId]?.successes?.[day];
+      const plantLabel = PLANTS.find(p => p.id === plantId)?.label || plantId;
+      if (text) showToast(`🌟 ${plantLabel}`, text);
+    });
+  });
 
   document.getElementById('timer-start')?.addEventListener('click', toggleTimer);
   document.getElementById('timer-reset')?.addEventListener('click', resetTimer);
@@ -1085,6 +1226,44 @@ function resubscribe() {
     state.loading = false;
     render();
   });
+}
+
+// ============================================================================
+// Synthèse multi-sites
+// ============================================================================
+function resubscribeSynthesis() {
+  Object.values(state.synthesisUnsubs).forEach(unsub => unsub && unsub());
+  state.synthesisUnsubs = {};
+  const { year, month } = parseISODate(state.synthesisDate);
+
+  state.synthesisSelected.forEach(plantId => {
+    state.synthesisLoading[plantId] = true;
+    state.synthesisUnsubs[plantId] = subscribe(plantId, year, month, (data) => {
+      state.synthesisData[plantId] = data;
+      state.synthesisLoading[plantId] = false;
+      render();
+    });
+  });
+  render();
+}
+
+function togglePlantSynthesis(plantId) {
+  const idx = state.synthesisSelected.indexOf(plantId);
+  if (idx === -1) state.synthesisSelected.push(plantId);
+  else state.synthesisSelected.splice(idx, 1);
+  saveSynthesisSelection(state.synthesisSelected);
+  resubscribeSynthesis();
+}
+
+function changeSynthesisDate(newDateIso) {
+  const prevMonth = parseISODate(state.synthesisDate);
+  state.synthesisDate = newDateIso;
+  const newMonth = parseISODate(newDateIso);
+  if (newMonth.year !== prevMonth.year || newMonth.month !== prevMonth.month) {
+    resubscribeSynthesis();
+  } else {
+    render();
+  }
 }
 
 function resubscribeActions() {

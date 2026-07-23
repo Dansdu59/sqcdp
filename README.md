@@ -160,6 +160,15 @@ Dans le formulaire de nouvelle action, un champ optionnel permet de joindre une 
 
 Les champs de date (création d'action, report) affichent un bouton 📅 à côté du champ : il ouvre directement le sélecteur de calendrier du navigateur pour éviter la saisie manuelle.
 
+## Synthèse multi-sites
+
+Un troisième onglet "Synthèse multi-sites" permet à un directeur suivant plusieurs usines de comparer les indicateurs d'un même jour entre sites :
+
+- **Date** : un sélecteur avec bouton calendrier, réglé par défaut sur aujourd'hui
+- **Sites à comparer** : cliquez sur les jetons (Neau, Saint-Gaultier, Terrasson, Sauveterre, Lotus) pour les inclure/exclure de la comparaison — la sélection est enregistrée automatiquement sur l'appareil et retrouvée à la prochaine ouverture
+- Le tableau affiche, pour chaque site sélectionné : le statut S/Q/C/D/P/E du jour choisi, le succès de la veille s'il existe (icône étoile, survol pour le lire), et le nombre d'écarts (cases rouges) ce jour-là
+- Vue en lecture seule : cliquer sur une case affiche le commentaire s'il existe, mais ne modifie pas le statut — les modifications se font depuis le tableau du site concerné (onglet "Tableau SQCDPE")
+
 ## Évolutions possibles
 
 - Authentification (mot de passe unique ou comptes nominatifs) pour restreindre l'accès en écriture.
